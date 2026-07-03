@@ -69,6 +69,10 @@ Nomad рассматривают 20 рабочих дней: дольше нел
     CTA_REDIRECT: "Переход к записи на консультацию 👇",
 }
 
+CONTENT_IMAGE_KEY: dict[str, str] = {
+    START_CAPTION: START_IMAGE,
+}
+
 CONTENT_LABELS: dict[str, str] = {
     START_CAPTION: "Приветствие /start",
     START_IMAGE: "Картинка /start",

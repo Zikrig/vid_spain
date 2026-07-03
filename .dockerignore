@@ -1,9 +1,8 @@
-.env
+
 __pycache__/
 .git/
 .venv/
 venv/
-creds.json
 *.md
 .cursor/
 data/

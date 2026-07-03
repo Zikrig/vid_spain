@@ -37,13 +37,19 @@ def parse_channel_input(raw: str) -> tuple[str | None, str | None, int | None]:
 
 
 def channel_api_target(channel: Channel) -> str | int:
+    target = channel_member_check_target(channel)
+    if target is None:
+        raise ValueError(f"Channel {channel.id} has no identifier")
+    return target
+
+
+def channel_member_check_target(channel: Channel) -> str | int | None:
+    """Target for get_chat_member — only chat_id or @username (invite links don't work)."""
     if channel.chat_id is not None:
         return channel.chat_id
     if channel.username:
         return f"@{channel.username}"
-    if channel.invite_url:
-        return channel.invite_url
-    raise ValueError(f"Channel {channel.id} has no identifier")
+    return None
 
 
 def channel_public_url(channel: Channel) -> str | None:

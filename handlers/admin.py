@@ -9,15 +9,15 @@ from aiogram.types import (
     Message,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from config.settings import settings
 from services.analytics import export_users_csv, format_funnel_report, get_funnel_stats
-from services.content import CONTENT_LABELS, START_IMAGE
+from services.content import CONTENT_IMAGE_KEY, CONTENT_LABELS, START_CAPTION, START_IMAGE
 from services.channel_resolve import message_html
 from services.content_store import get_text, set_image_file_id, set_text
 from services.database import session_factory
-from services.models import Campaign, PushMessage
+from services.models import Campaign, PushDelivery, PushMessage
 
 router = Router()
 
@@ -81,20 +81,21 @@ def push_edit_keyboard(push_id: int, enabled: bool):
             text="✏️ Текст", callback_data=f"admin:edit_text:{push_id}"
         ),
         InlineKeyboardButton(
-            text="⏱ Тайминг", callback_data=f"admin:edit_delay:{push_id}"
+            text="🖼 Картинка", callback_data=f"admin:edit_image:{push_id}"
+        ),
+        InlineKeyboardButton(
+            text="🗑 Удалить", callback_data=f"admin:push_delete:{push_id}"
         ),
     )
     builder.row(
+        InlineKeyboardButton(
+            text="⏱ Тайминг", callback_data=f"admin:edit_delay:{push_id}"
+        ),
         InlineKeyboardButton(
             text="🔘 Кнопка", callback_data=f"admin:edit_btn:{push_id}"
         ),
         InlineKeyboardButton(
             text="🔗 Ссылка", callback_data=f"admin:edit_url:{push_id}"
-        ),
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="🖼 Фото", callback_data=f"admin:edit_image:{push_id}"
         ),
     )
     builder.row(
@@ -127,12 +128,11 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
-    return builder.as_markup()
-
-
 def texts_list_keyboard():
     builder = InlineKeyboardBuilder()
     for key, label in CONTENT_LABELS.items():
+        if key == START_IMAGE:
+            continue
         builder.row(
             InlineKeyboardButton(
                 text=label,
@@ -145,23 +145,26 @@ def texts_list_keyboard():
 
 def content_edit_keyboard(content_key: str):
     builder = InlineKeyboardBuilder()
-    if content_key == START_IMAGE:
+    image_key = CONTENT_IMAGE_KEY.get(content_key)
+    if image_key:
         builder.row(
             InlineKeyboardButton(
-                text="🖼 Загрузить фото",
-                callback_data=f"admin:content_img:{content_key}",
-            )
-        )
-        builder.row(
+                text="✏️ Текст",
+                callback_data=f"admin:content_edit:{content_key}",
+            ),
             InlineKeyboardButton(
-                text="🗑 Сбросить (файл по умолчанию)",
-                callback_data=f"admin:content_img_reset:{content_key}",
-            )
+                text="🖼 Картинка",
+                callback_data=f"admin:content_img:{image_key}",
+            ),
+            InlineKeyboardButton(
+                text="🗑 Удалить",
+                callback_data=f"admin:content_img_reset:{image_key}",
+            ),
         )
     else:
         builder.row(
             InlineKeyboardButton(
-                text="✏️ Редактировать",
+                text="✏️ Текст",
                 callback_data=f"admin:content_edit:{content_key}",
             )
         )
@@ -169,6 +172,46 @@ def content_edit_keyboard(content_key: str):
         InlineKeyboardButton(text="◀️ К списку", callback_data="admin:texts")
     )
     return builder.as_markup()
+
+
+async def format_content_detail(session, content_key: str) -> str:
+    label = CONTENT_LABELS.get(content_key, content_key)
+    image_key = CONTENT_IMAGE_KEY.get(content_key)
+
+    if image_key:
+        from services.content_store import get_image_file_id
+
+        text = await get_text(session, content_key)
+        text_preview = text[:300] + ("..." if len(text) > 300 else "")
+        file_id = await get_image_file_id(session, image_key)
+        img_status = (
+            "загружена в Telegram ✅"
+            if file_id
+            else "файл по умолчанию (assets/)"
+        )
+        return (
+            f"<b>{label}</b>\n\n"
+            f"{text_preview}\n\n"
+            f"🖼 Картинка: {img_status}"
+        )
+
+    text = await get_text(session, content_key)
+    preview = text[:300] + ("..." if len(text) > 300 else "")
+    return f"<b>{label}</b>\n\n{preview}"
+
+
+def format_push_detail(push: PushMessage) -> str:
+    preview = push.text[:200] + ("..." if len(push.text) > 200 else "")
+    image_status = "есть ✅" if push.image_file_id else "нет"
+    return (
+        f"<b>Пуш #{push.order_index}</b>\n"
+        f"Тайминг: {push.delay_minutes} мин от входа в бота\n"
+        f"Кнопка: {push.button_text or '—'}\n"
+        f"Ссылка: {push.button_url or '—'}\n"
+        f"Картинка: {image_status}\n"
+        f"Стоп при клике: {'да' if push.stop_on_consultation_click else 'нет'}\n\n"
+        f"{preview}"
+    )
 
 
 @router.callback_query(F.data == "admin:texts")
@@ -191,20 +234,14 @@ async def admin_content_detail(callback: CallbackQuery) -> None:
         return
 
     content_key = callback.data.split(":", 2)[2]
-    label = CONTENT_LABELS.get(content_key, content_key)
+    if content_key == START_IMAGE:
+        content_key = START_CAPTION
 
     async with session_factory() as session:
-        if content_key == START_IMAGE:
-            from services.content_store import get_image_file_id
-
-            file_id = await get_image_file_id(session, content_key)
-            preview = "Загружено в Telegram ✅" if file_id else "Файл по умолчанию (assets/)"
-        else:
-            text = await get_text(session, content_key)
-            preview = text[:300] + ("..." if len(text) > 300 else "")
+        text = await format_content_detail(session, content_key)
 
     await callback.message.edit_text(
-        f"<b>{label}</b>\n\n{preview}",
+        text,
         reply_markup=content_edit_keyboard(content_key),
     )
     await callback.answer()
@@ -246,7 +283,7 @@ async def admin_content_edit_save(message: Message, state: FSMContext) -> None:
         reply_markup=InlineKeyboardBuilder()
         .row(
             InlineKeyboardButton(
-                text="◀️ Назад",
+                text="◀️ К посту",
                 callback_data=f"admin:content:{content_key}",
             )
         )
@@ -261,9 +298,16 @@ async def admin_content_img_start(callback: CallbackQuery, state: FSMContext) ->
         return
 
     content_key = callback.data.split(":", 2)[2]
+    label = CONTENT_LABELS.get(content_key, content_key)
+    parent_key = next(
+        (post_key for post_key, image_key in CONTENT_IMAGE_KEY.items() if image_key == content_key),
+        content_key,
+    )
     await state.set_state(AdminStates.edit_content_image)
-    await state.update_data(content_key=content_key)
-    await callback.message.answer("Отправьте новое фото для /start:")
+    await state.update_data(content_key=content_key, parent_key=parent_key)
+    await callback.message.answer(
+        f"Отправьте новое фото для «{CONTENT_LABELS.get(parent_key, label)}»."
+    )
     await callback.answer()
 
 
@@ -274,6 +318,7 @@ async def admin_content_img_save(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     content_key = data["content_key"]
+    parent_key = data.get("parent_key", content_key)
     file_id = message.photo[-1].file_id
 
     async with session_factory() as session:
@@ -281,7 +326,17 @@ async def admin_content_img_save(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer("Фото сохранено ✅")
+    await message.answer(
+        "Картинка сохранена ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(
+            InlineKeyboardButton(
+                text="◀️ К посту",
+                callback_data=f"admin:content:{parent_key}",
+            )
+        )
+        .as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:content_img_reset:"))
@@ -291,14 +346,19 @@ async def admin_content_img_reset(callback: CallbackQuery) -> None:
         return
 
     content_key = callback.data.split(":", 2)[2]
+    parent_key = next(
+        (post_key for post_key, image_key in CONTENT_IMAGE_KEY.items() if image_key == content_key),
+        content_key,
+    )
     async with session_factory() as session:
         await set_image_file_id(session, content_key, None)
         await session.commit()
+        text = await format_content_detail(session, parent_key)
 
-    await callback.answer("Сброшено")
+    await callback.answer("Картинка удалена")
     await callback.message.edit_text(
-        "<b>Картинка /start</b>\n\nИспользуется файл по умолчанию (assets/).",
-        reply_markup=content_edit_keyboard(content_key),
+        text,
+        reply_markup=content_edit_keyboard(parent_key),
     )
 
 
@@ -338,17 +398,9 @@ async def admin_push_detail(callback: CallbackQuery) -> None:
         await callback.answer("Пуш не найден", show_alert=True)
         return
 
-    preview = push.text[:200] + ("..." if len(push.text) > 200 else "")
-    text = (
-        f"<b>Пуш #{push.order_index}</b>\n"
-        f"Тайминг: {push.delay_minutes} мин от входа в бота\n"
-        f"Кнопка: {push.button_text or '—'}\n"
-        f"Ссылка: {push.button_url or '—'}\n"
-        f"Стоп при клике: {'да' if push.stop_on_consultation_click else 'нет'}\n\n"
-        f"{preview}"
-    )
     await callback.message.edit_text(
-        text, reply_markup=push_edit_keyboard(push.id, push.enabled)
+        format_push_detail(push),
+        reply_markup=push_edit_keyboard(push.id, push.enabled),
     )
     await callback.answer()
 
@@ -449,7 +501,12 @@ async def admin_edit_delay_save(message: Message, state: FSMContext) -> None:
             await session.commit()
 
     await state.clear()
-    await message.answer(f"Тайминг сохранён: {delay} мин ✅")
+    await message.answer(
+        f"Тайминг сохранён: {delay} мин ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:edit_btn:"))
@@ -479,7 +536,12 @@ async def admin_edit_btn_save(message: Message, state: FSMContext) -> None:
             await session.commit()
 
     await state.clear()
-    await message.answer("Текст кнопки сохранён ✅")
+    await message.answer(
+        "Текст кнопки сохранён ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:edit_url:"))
@@ -512,7 +574,12 @@ async def admin_edit_url_save(message: Message, state: FSMContext) -> None:
             await session.commit()
 
     await state.clear()
-    await message.answer("Ссылка сохранена ✅")
+    await message.answer(
+        "Ссылка сохранена ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .as_markup(),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:edit_image:"))
@@ -525,7 +592,7 @@ async def admin_edit_image_start(callback: CallbackQuery, state: FSMContext) -> 
     await state.set_state(AdminStates.edit_image)
     await state.update_data(push_id=push_id)
     await callback.message.answer(
-        "Отправьте фото для пуша или /skip чтобы убрать изображение."
+        "Отправьте картинку для пуша или /skip чтобы убрать изображение."
     )
     await callback.answer()
 
@@ -546,7 +613,12 @@ async def admin_edit_image_save(message: Message, state: FSMContext) -> None:
             await session.commit()
 
     await state.clear()
-    await message.answer("Изображение сохранено ✅")
+    await message.answer(
+        "Картинка сохранена ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .as_markup(),
+    )
 
 
 @router.message(AdminStates.edit_image, Command("skip"))
@@ -564,7 +636,47 @@ async def admin_edit_image_skip(message: Message, state: FSMContext) -> None:
             await session.commit()
 
     await state.clear()
-    await message.answer("Изображение удалено ✅")
+    await message.answer(
+        "Картинка удалена ✅",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .as_markup(),
+    )
+
+
+@router.callback_query(F.data.startswith("admin:push_delete:"))
+async def admin_push_delete(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    push_id = int(callback.data.split(":")[2])
+    async with session_factory() as session:
+        push = await session.get(PushMessage, push_id)
+        if push is None:
+            await callback.answer("Пуш не найден", show_alert=True)
+            return
+
+        await session.execute(
+            delete(PushDelivery).where(PushDelivery.push_id == push_id)
+        )
+        await session.delete(push)
+        await session.commit()
+
+    await callback.answer("Пуш удалён")
+    async with session_factory() as session:
+        all_pushes = (
+            await session.execute(
+                select(PushMessage)
+                .where(PushMessage.campaign_id == 1)
+                .order_by(PushMessage.order_index)
+            )
+        ).scalars().all()
+
+    await callback.message.edit_text(
+        "<b>📬 Цепочка прогрева</b>\nВыберите пуш для редактирования:",
+        reply_markup=pushes_list_keyboard(list(all_pushes)),
+    )
 
 
 @router.callback_query(F.data == "admin:stats")

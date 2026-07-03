@@ -1,7 +1,11 @@
+import logging
+
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.models import Channel
+
+logger = logging.getLogger(__name__)
 
 
 async def seed_channels(session: AsyncSession) -> None:
@@ -92,7 +96,18 @@ async def resolve_unresolved_channels(bot, session: AsyncSession) -> None:
             channel.chat_id = chat.id
             if chat.username:
                 channel.username = chat.username
-        except Exception:
-            continue
+            logger.info(
+                "Resolved channel %s (@%s) -> chat_id=%s",
+                channel.title,
+                channel.username,
+                channel.chat_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not resolve channel %s (@%s): %s",
+                channel.title,
+                channel.username,
+                exc,
+            )
 
     await session.commit()

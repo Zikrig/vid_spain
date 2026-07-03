@@ -1,0 +1,64 @@
+# Spain Permit Bot — инструкция по запуску
+
+## Требования
+
+- Python 3.14+ (или Docker)
+- Telegram Bot Token от [@BotFather](https://t.me/BotFather)
+- Бот добавлен **администратором** во все каналы, которые настроены в `/admin` → Каналы
+
+## Настройка
+
+1. Скопируйте `.env.example` в `.env`:
+   ```
+   copy .env.example .env
+   ```
+
+2. Заполните `.env`:
+   - `BOT_TOKEN` — токен бота
+   - `ADMIN_IDS` — Telegram ID админов через запятую (узнать: [@userinfobot](https://t.me/userinfobot))
+   - `CONSULTATION_URL` — ссылка на запись; поддерживает `{source}` и `{user_id}`
+
+   Каналы настраиваются только в `/admin` → Каналы (@username или ссылка t.me).
+
+## Локальный запуск
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python bot.py
+```
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+База SQLite сохраняется в volume `bot-data`.
+
+## Deep-link для рекламы
+
+```
+https://t.me/YourBot?start=instagram_july
+```
+
+Метка `instagram_july` сохранится к пользователю и попадёт в ссылку консультации.
+
+## Админ-панель
+
+Команда `/admin` — доступна только ID из `ADMIN_IDS`.
+
+- Редактирование всех текстов бота и лид-магнита (`/admin` → Тексты)
+- Управление каналами: добавить, удалить, вкл/выкл, редактировать (`/admin` → Каналы)
+- Редактирование пушей (текст, фото, тайминг, кнопка, ссылка)
+- Включение/отключение пушей
+- Аналитика воронки
+- Экспорт CSV
+- Дублирование кампании
+
+## Troubleshooting
+
+- **Не проверяет подписку** — бот должен быть админом канала; каналы настраиваются в `/admin` → Каналы
+- **Chat member updates** — включите «Manage users» или добавьте бота админом с правом видеть участников
+- **Ошибка BOT_TOKEN** — проверьте `.env`

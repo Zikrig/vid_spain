@@ -1,8 +1,13 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.content import DEFAULT_CONTENT
+from services.content import DEFAULT_CONTENT, LEAD_MAGNET
 from services.models import BotContent
+
+LEAD_MAGNET_LINK = "https://spainpermit.com/#diagnostic"
+LEAD_MAGNET_LINK_SUFFIX = (
+    f'\n\n👉 <a href="{LEAD_MAGNET_LINK}">Записаться на бесплатную диагностику</a>'
+)
 
 
 async def get_text(session: AsyncSession, key: str, default: str = "") -> str:
@@ -48,3 +53,7 @@ async def seed_content(session: AsyncSession) -> None:
     for key, text in DEFAULT_CONTENT.items():
         if key not in existing_keys:
             session.add(BotContent(key=key, text=text))
+
+    row = await session.get(BotContent, LEAD_MAGNET)
+    if row and LEAD_MAGNET_LINK not in row.text:
+        row.text = row.text.rstrip() + LEAD_MAGNET_LINK_SUFFIX

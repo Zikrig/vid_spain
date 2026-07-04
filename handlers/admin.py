@@ -290,9 +290,8 @@ def format_push_detail(push: PushMessage) -> str:
         f"<b>Пуш #{push.order_index}</b>\n"
         f"Тайминг: {push.delay_minutes} мин от входа в бота\n"
         f"Кнопка: {push.button_text or '—'}\n"
-        f"Ссылка: {push.button_url or '—'}\n"
-        f"Картинка: {image_status}\n"
-        f"Стоп при клике: {'да' if push.stop_on_consultation_click else 'нет'}\n\n"
+        f"Ссылка (открывается сразу): {push.button_url or '{consultation_url}'}\n"
+        f"Картинка: {image_status}\n\n"
         f"{preview}"
     )
 
@@ -617,7 +616,10 @@ async def admin_edit_btn_start(callback: CallbackQuery, state: FSMContext) -> No
     push_id = int(callback.data.split(":")[2])
     await state.set_state(AdminStates.edit_button_text)
     await state.update_data(push_id=push_id)
-    await callback.message.answer("Отправьте текст кнопки:")
+    await callback.message.answer(
+        "Отправьте текст кнопки в пуше (подпись на ссылке).\n"
+        "URL настраивается отдельно: 🔗 Ссылка."
+    )
     await callback.answer()
 
 
@@ -653,8 +655,8 @@ async def admin_edit_url_start(callback: CallbackQuery, state: FSMContext) -> No
     await state.set_state(AdminStates.edit_button_url)
     await state.update_data(push_id=push_id)
     await callback.message.answer(
-        "Отправьте URL кнопки.\n"
-        "Используйте {consultation_url} для ссылки записи с меткой источника."
+        "Отправьте URL кнопки — откроется сразу при нажатии в пуше.\n"
+        "Шаблон: <code>{consultation_url}</code> — подставит ссылку из .env с меткой источника."
     )
     await callback.answer()
 

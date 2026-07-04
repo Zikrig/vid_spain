@@ -1,16 +1,9 @@
 from aiogram import Bot, F, Router
-from aiogram.types import (
-    CallbackQuery,
-    ChatMemberUpdated,
-    InlineKeyboardButton,
-    Message,
-)
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from services.analytics import log_event
 from services.channels import find_channel_by_chat, is_subscribed, subscribe_keyboard
 from services.content import (
-    CTA_REDIRECT,
     LEAD_MAGNET,
     LEAD_MAGNET_VIDEO,
     NOT_SUBSCRIBED,
@@ -20,7 +13,7 @@ from services.content import (
 from services.content_store import get_text
 from services.database import session_factory
 from services.models import PushMessage, User
-from services.scheduler import _consultation_url, _resolve_button_url
+from services.push_urls import push_button_url
 from services.subscription import is_member_status
 from services.users import (
     mark_consultation_click,
@@ -100,6 +93,7 @@ async def check_subscription(callback: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("push_cta:"))
 async def push_cta_click(callback: CallbackQuery) -> None:
+    """Старые пуши с callback-кнопкой — открываем ссылку без второго сообщения."""
     push_id = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
 
@@ -110,18 +104,15 @@ async def push_cta_click(callback: CallbackQuery) -> None:
             await callback.answer("Ошибка", show_alert=True)
             return
 
+        url = push_button_url(push, user)
+        if not url:
+            await callback.answer("Ссылка не настроена", show_alert=True)
+            return
+
         await mark_consultation_click(session, user, push_id=push_id)
-        url = _resolve_button_url(push.button_url, user) or _consultation_url(user)
-        redirect_text = await get_text(session, CTA_REDIRECT)
         await session.commit()
 
-    await callback.answer()
-    builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text=push.button_text or "Записаться", url=url))
-    await callback.message.answer(
-        redirect_text,
-        reply_markup=builder.as_markup(),
-    )
+    await callback.answer(url=url)
 
 
 @router.chat_member()

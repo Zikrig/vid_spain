@@ -94,7 +94,6 @@ CONTENT_TEXT_KEYS: tuple[str, ...] = (
     LEAD_MAGNET_VIDEO,
     NOT_SUBSCRIBED,
     ALREADY_RECEIVED,
-    CTA_REDIRECT,
 )
 
 CONTENT_BUTTON_KEYS: tuple[str, ...] = (

@@ -3,28 +3,15 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from config.settings import settings
 from services.models import PushDelivery, PushMessage, User
+from services.push_urls import push_button_url
 
 logger = logging.getLogger(__name__)
-
-
-def _consultation_url(user: User) -> str:
-    return settings.consultation_url.format(
-        source=user.source or "direct",
-        user_id=user.id,
-    )
-
-
-def _resolve_button_url(url_template: str | None, user: User) -> str | None:
-    if not url_template:
-        return None
-    return url_template.replace("{consultation_url}", _consultation_url(user))
 
 
 class PushScheduler:
@@ -106,14 +93,15 @@ class PushScheduler:
         self, session: AsyncSession, user: User, push: PushMessage
     ) -> None:
         builder = InlineKeyboardBuilder()
-        if push.button_text:
+        url = push_button_url(push, user)
+        if push.button_text and url:
             builder.row(
                 InlineKeyboardButton(
                     text=push.button_text,
-                    callback_data=f"push_cta:{push.id}",
+                    url=url,
                 )
             )
-        keyboard = builder.as_markup() if push.button_text else None
+        keyboard = builder.as_markup() if push.button_text and url else None
 
         try:
             if push.image_file_id:

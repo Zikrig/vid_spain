@@ -94,14 +94,14 @@ class PushScheduler:
     ) -> None:
         builder = InlineKeyboardBuilder()
         url = push_button_url(push, user)
-        if push.button_text and url:
+        if push.button_enabled and push.button_text and url:
             builder.row(
                 InlineKeyboardButton(
                     text=push.button_text,
                     url=url,
                 )
             )
-        keyboard = builder.as_markup() if push.button_text and url else None
+        keyboard = builder.as_markup() if push.button_enabled and push.button_text and url else None
 
         try:
             if push.image_file_id:

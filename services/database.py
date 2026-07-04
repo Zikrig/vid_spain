@@ -75,6 +75,31 @@ async def migrate_drop_campaigns(session: AsyncSession) -> None:
     await conn.execute(text("DROP TABLE IF EXISTS campaigns"))
 
 
+async def migrate_push_schema(session: AsyncSession) -> None:
+    conn = await session.connection()
+    tables = {
+        row[0]
+        for row in (
+            await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            )
+        ).fetchall()
+    }
+    if "push_messages" not in tables:
+        return
+
+    columns = {
+        row[1]
+        for row in (await conn.execute(text("PRAGMA table_info(push_messages)"))).fetchall()
+    }
+    if "button_enabled" not in columns:
+        await conn.execute(
+            text(
+                "ALTER TABLE push_messages ADD COLUMN button_enabled BOOLEAN DEFAULT 1"
+            )
+        )
+
+
 async def init_db() -> None:
     db_path = settings.database_url.replace("sqlite+aiosqlite:///", "")
     if db_path.startswith("/"):
@@ -88,6 +113,7 @@ async def init_db() -> None:
     async with session_factory() as session:
         await migrate_channels_schema(session)
         await migrate_drop_campaigns(session)
+        await migrate_push_schema(session)
         await session.commit()
 
     async with session_factory() as session:

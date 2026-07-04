@@ -16,6 +16,8 @@ def resolve_push_button_url(url_template: str | None, user: User) -> str | None:
 
 
 def push_button_url(push, user: User) -> str | None:
+    if not push.button_enabled:
+        return None
     return resolve_push_button_url(push.button_url, user) or (
         consultation_url(user) if push.button_text else None
     )

@@ -125,7 +125,7 @@ def pushes_list_keyboard(pushes: list[PushMessage]):
 
 def push_edit_keyboard(push_id: int, enabled: bool):
     builder = InlineKeyboardBuilder()
-    toggle_text = "⏸ Отключить" if enabled else "✅ Включить"
+    toggle_text = "⏸ Отключить пуш" if enabled else "✅ Включить пуш"
     builder.row(
         InlineKeyboardButton(
             text=toggle_text, callback_data=f"admin:toggle:{push_id}"
@@ -147,14 +147,33 @@ def push_edit_keyboard(push_id: int, enabled: bool):
             text="⏱ Тайминг", callback_data=f"admin:edit_delay:{push_id}"
         ),
         InlineKeyboardButton(
-            text="🔘 Кнопка", callback_data=f"admin:edit_btn:{push_id}"
+            text="🔘 Кнопка", callback_data=f"admin:push_btn:{push_id}"
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ К списку", callback_data="admin:pushes")
+    )
+    return builder.as_markup()
+
+
+def push_button_menu_keyboard(push_id: int, button_enabled: bool):
+    builder = InlineKeyboardBuilder()
+    toggle_text = "⏸ Выключить" if button_enabled else "✅ Включить"
+    builder.row(
+        InlineKeyboardButton(
+            text="✏️ Текст", callback_data=f"admin:edit_btn:{push_id}"
         ),
         InlineKeyboardButton(
             text="🔗 Ссылка", callback_data=f"admin:edit_url:{push_id}"
         ),
     )
     builder.row(
-        InlineKeyboardButton(text="◀️ К списку", callback_data="admin:pushes")
+        InlineKeyboardButton(
+            text=toggle_text, callback_data=f"admin:push_btn_toggle:{push_id}"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}")
     )
     return builder.as_markup()
 
@@ -286,13 +305,24 @@ async def format_content_detail(session, content_key: str) -> str:
 def format_push_detail(push: PushMessage) -> str:
     preview = push.text[:200] + ("..." if len(push.text) > 200 else "")
     image_status = "есть ✅" if push.image_file_id else "нет"
+    button_status = "включена ✅" if push.button_enabled else "выключена ⏸"
     return (
         f"<b>Пуш #{push.order_index}</b>\n"
         f"Тайминг: {push.delay_minutes} мин от входа в бота\n"
-        f"Кнопка: {push.button_text or '—'}\n"
-        f"Ссылка (открывается сразу): {push.button_url or '{consultation_url}'}\n"
+        f"Кнопка: {button_status} — {push.button_text or '—'}\n"
         f"Картинка: {image_status}\n\n"
         f"{preview}"
+    )
+
+
+def format_push_button_detail(push: PushMessage) -> str:
+    status = "включена ✅" if push.button_enabled else "выключена ⏸"
+    url = push.button_url or "{consultation_url}"
+    return (
+        f"<b>🔘 Кнопка — пуш #{push.order_index}</b>\n\n"
+        f"Статус: {status}\n"
+        f"Текст: {push.button_text or '—'}\n"
+        f"Ссылка: {url}"
     )
 
 
@@ -482,7 +512,7 @@ async def admin_pushes(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("admin:push:"))
+@router.callback_query(F.data.regexp(r"^admin:push:\d+$"))
 async def admin_push_detail(callback: CallbackQuery) -> None:
     if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
@@ -501,6 +531,50 @@ async def admin_push_detail(callback: CallbackQuery) -> None:
         reply_markup=push_edit_keyboard(push.id, push.enabled),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^admin:push_btn:\d+$"))
+async def admin_push_button_menu(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    push_id = int(callback.data.split(":")[2])
+    async with session_factory() as session:
+        push = await session.get(PushMessage, push_id)
+
+    if push is None:
+        await callback.answer("Пуш не найден", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        format_push_button_detail(push),
+        reply_markup=push_button_menu_keyboard(push.id, push.button_enabled),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:push_btn_toggle:"))
+async def admin_push_button_toggle(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    push_id = int(callback.data.split(":")[2])
+    async with session_factory() as session:
+        push = await session.get(PushMessage, push_id)
+        if push is None:
+            await callback.answer("Не найден", show_alert=True)
+            return
+        push.button_enabled = not push.button_enabled
+        button_enabled = push.button_enabled
+        await session.commit()
+
+    await callback.answer("Обновлено")
+    await callback.message.edit_text(
+        format_push_button_detail(push),
+        reply_markup=push_button_menu_keyboard(push_id, button_enabled),
+    )
 
 
 @router.callback_query(F.data.startswith("admin:toggle:"))
@@ -640,7 +714,7 @@ async def admin_edit_btn_save(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Текст кнопки сохранён ✅",
         reply_markup=InlineKeyboardBuilder()
-        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .row(InlineKeyboardButton(text="◀️ К кнопке", callback_data=f"admin:push_btn:{push_id}"))
         .as_markup(),
     )
 
@@ -678,7 +752,7 @@ async def admin_edit_url_save(message: Message, state: FSMContext) -> None:
     await message.answer(
         "Ссылка сохранена ✅",
         reply_markup=InlineKeyboardBuilder()
-        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .row(InlineKeyboardButton(text="◀️ К кнопке", callback_data=f"admin:push_btn:{push_id}"))
         .as_markup(),
     )
 

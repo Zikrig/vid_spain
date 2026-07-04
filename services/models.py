@@ -47,6 +47,7 @@ class PushMessage(Base):
     image_file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     button_text: Mapped[str | None] = mapped_column(String(255), nullable=True)
     button_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    button_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stop_on_consultation_click: Mapped[bool] = mapped_column(Boolean, default=True)
 

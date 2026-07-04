@@ -10,7 +10,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from services.analytics import log_event
 from services.channels import find_channel_by_chat, is_subscribed, subscribe_keyboard
 from services.content import (
-    ALREADY_RECEIVED,
     CTA_REDIRECT,
     LEAD_MAGNET,
     LEAD_MAGNET_VIDEO,
@@ -52,8 +51,6 @@ async def get_lead_magnet(callback: CallbackQuery, bot: Bot) -> None:
             return
 
         if user.got_lead_magnet:
-            already_msg = await get_text(session, ALREADY_RECEIVED)
-            await callback.message.answer(already_msg)
             await _deliver_lead_magnet(callback.message, session)
             await session.commit()
             return
@@ -85,7 +82,6 @@ async def check_subscription(callback: CallbackQuery, bot: Bot) -> None:
 
         fail_msg = await get_text(session, SUB_CHECK_FAIL)
         ok_msg = await get_text(session, SUB_CHECK_OK)
-        already_msg = await get_text(session, ALREADY_RECEIVED)
 
         subscribed = await is_subscribed(bot, session, user_id)
         if not subscribed:
@@ -93,14 +89,11 @@ async def check_subscription(callback: CallbackQuery, bot: Bot) -> None:
             return
 
         await mark_subscribed(session, user)
-        already_had_magnet = user.got_lead_magnet
-        if not already_had_magnet:
+        if not user.got_lead_magnet:
             await mark_lead_magnet(session, user)
         await session.commit()
 
     await callback.answer(ok_msg)
-    if already_had_magnet:
-        await callback.message.answer(already_msg)
     async with session_factory() as session:
         await _deliver_lead_magnet(callback.message, session)
 

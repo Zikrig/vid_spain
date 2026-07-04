@@ -13,11 +13,21 @@ from sqlalchemy import delete, select
 
 from config.settings import settings
 from services.analytics import export_users_csv, format_funnel_report, get_funnel_stats
-from services.content import CONTENT_IMAGE_KEY, CONTENT_LABELS, START_CAPTION, START_IMAGE
+from services.content import (
+    CONTENT_ALERT_KEYS,
+    CONTENT_BUTTON_KEYS,
+    CONTENT_GROUP_LABELS,
+    CONTENT_IMAGE_KEY,
+    CONTENT_LABELS,
+    CONTENT_TEXT_KEYS,
+    START_CAPTION,
+    START_IMAGE,
+)
 from services.channel_resolve import message_html
 from services.content_store import get_text, set_image_file_id, set_text
 from services.database import session_factory
-from services.models import PushDelivery, PushMessage
+from services.models import PushDelivery, PushMessage, User
+from services.users import get_or_create_user, reset_all_warmups, reset_user_warmup
 
 router = Router()
 
@@ -36,10 +46,57 @@ def is_admin(user_id: int) -> bool:
     return user_id in settings.admin_ids
 
 
+def content_group_for_key(content_key: str) -> str:
+    if content_key in CONTENT_BUTTON_KEYS:
+        return "buttons"
+    if content_key in CONTENT_ALERT_KEYS:
+        return "alerts"
+    return "messages"
+
+
+def texts_menu_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="📝 Сообщения", callback_data="admin:texts:messages"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔘 Кнопки", callback_data="admin:texts:buttons"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔔 Алерты", callback_data="admin:texts:alerts"
+        )
+    )
+    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:menu"))
+    return builder.as_markup()
+
+
+def content_group_keyboard(group: str):
+    keys_by_group = {
+        "messages": CONTENT_TEXT_KEYS,
+        "buttons": CONTENT_BUTTON_KEYS,
+        "alerts": CONTENT_ALERT_KEYS,
+    }
+    builder = InlineKeyboardBuilder()
+    for key in keys_by_group[group]:
+        builder.row(
+            InlineKeyboardButton(
+                text=CONTENT_LABELS[key],
+                callback_data=f"admin:content:{key}",
+            )
+        )
+    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:texts"))
+    return builder.as_markup()
+
+
 def admin_main_keyboard():
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="📝 Тексты", callback_data="admin:texts"),
+        InlineKeyboardButton(text="📝 Контент", callback_data="admin:texts"),
         InlineKeyboardButton(text="📬 Пуши", callback_data="admin:pushes"),
     )
     builder.row(
@@ -113,6 +170,46 @@ async def cmd_admin(message: Message) -> None:
     )
 
 
+@router.message(Command("fm"))
+async def cmd_fm(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    async with session_factory() as session:
+        user = await session.get(User, message.from_user.id)
+        if user is None:
+            user, _ = await get_or_create_user(
+                session,
+                message.from_user.id,
+                message.from_user.username,
+                message.from_user.first_name,
+                message.from_user.last_name,
+                "direct",
+            )
+        await reset_user_warmup(session, user)
+        await session.commit()
+
+    await message.answer(
+        "Прогрев сброшен для вашего аккаунта.\n"
+        "Пуши начнут приходить заново по таймингам от текущего момента."
+    )
+
+
+@router.message(Command("f_all"))
+async def cmd_f_all(message: Message) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    async with session_factory() as session:
+        count = await reset_all_warmups(session)
+        await session.commit()
+
+    await message.answer(
+        f"Прогрев сброшен для {count} пользователей.\n"
+        "Все пуши будут отправлены заново по таймингам."
+    )
+
+
 @router.callback_query(F.data == "admin:menu")
 async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(callback.from_user.id):
@@ -124,21 +221,6 @@ async def admin_menu(callback: CallbackQuery, state: FSMContext) -> None:
         reply_markup=admin_main_keyboard(),
     )
     await callback.answer()
-
-
-def texts_list_keyboard():
-    builder = InlineKeyboardBuilder()
-    for key, label in CONTENT_LABELS.items():
-        if key == START_IMAGE:
-            continue
-        builder.row(
-            InlineKeyboardButton(
-                text=label,
-                callback_data=f"admin:content:{key}",
-            )
-        )
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:menu"))
-    return builder.as_markup()
 
 
 def content_edit_keyboard(content_key: str):
@@ -167,7 +249,10 @@ def content_edit_keyboard(content_key: str):
             )
         )
     builder.row(
-        InlineKeyboardButton(text="◀️ К списку", callback_data="admin:texts")
+        InlineKeyboardButton(
+            text="◀️ К списку",
+            callback_data=f"admin:texts:{content_group_for_key(content_key)}",
+        )
     )
     return builder.as_markup()
 
@@ -219,8 +304,26 @@ async def admin_texts(callback: CallbackQuery) -> None:
         return
 
     await callback.message.edit_text(
-        "<b>📝 Тексты бота</b>\n\nВыберите блок для редактирования:",
-        reply_markup=texts_list_keyboard(),
+        "<b>📝 Контент бота</b>\n\nВыберите раздел:",
+        reply_markup=texts_menu_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:texts:"))
+async def admin_texts_group(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    group = callback.data.split(":")[2]
+    if group not in CONTENT_GROUP_LABELS:
+        await callback.answer("Раздел не найден", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"<b>{CONTENT_GROUP_LABELS[group]}</b>\n\nВыберите элемент:",
+        reply_markup=content_group_keyboard(group),
     )
     await callback.answer()
 

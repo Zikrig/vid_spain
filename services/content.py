@@ -80,12 +80,38 @@ CONTENT_LABELS: dict[str, str] = {
     LEAD_MAGNET_VIDEO: "Видео-гайд (URL, необязательно)",
     NOT_SUBSCRIBED: "Напоминание о подписке",
     ALREADY_RECEIVED: "Повторный запрос гайда",
-    BTN_GET_GUIDE: "Кнопка «Получить гайд»",
-    BTN_SUBSCRIBE: "Кнопка «Подписаться»",
-    BTN_CHECK_SUB: "Кнопка «Проверить»",
-    SUB_CHECK_FAIL: "Алерт: подписка не найдена",
-    SUB_CHECK_OK: "Алерт: подписка OK",
-    CTA_REDIRECT: "Текст перед ссылкой на консультацию",
+    BTN_GET_GUIDE: "«Получить гайд»",
+    BTN_SUBSCRIBE: "«Подписаться»",
+    BTN_CHECK_SUB: "«Проверить»",
+    SUB_CHECK_FAIL: "Подписка не найдена",
+    SUB_CHECK_OK: "Подписка OK",
+    CTA_REDIRECT: "Перед ссылкой на консультацию",
+}
+
+CONTENT_TEXT_KEYS: tuple[str, ...] = (
+    START_CAPTION,
+    LEAD_MAGNET,
+    LEAD_MAGNET_VIDEO,
+    NOT_SUBSCRIBED,
+    ALREADY_RECEIVED,
+    CTA_REDIRECT,
+)
+
+CONTENT_BUTTON_KEYS: tuple[str, ...] = (
+    BTN_GET_GUIDE,
+    BTN_SUBSCRIBE,
+    BTN_CHECK_SUB,
+)
+
+CONTENT_ALERT_KEYS: tuple[str, ...] = (
+    SUB_CHECK_FAIL,
+    SUB_CHECK_OK,
+)
+
+CONTENT_GROUP_LABELS: dict[str, str] = {
+    "messages": "📝 Тексты",
+    "buttons": "🔘 Кнопки",
+    "alerts": "🔔 Алерты",
 }
 
 DEFAULT_PUSHES = [

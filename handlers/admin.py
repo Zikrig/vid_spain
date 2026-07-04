@@ -17,7 +17,7 @@ from services.content import CONTENT_IMAGE_KEY, CONTENT_LABELS, START_CAPTION, S
 from services.channel_resolve import message_html
 from services.content_store import get_text, set_image_file_id, set_text
 from services.database import session_factory
-from services.models import Campaign, PushDelivery, PushMessage
+from services.models import PushDelivery, PushMessage
 
 router = Router()
 
@@ -30,7 +30,6 @@ class AdminStates(StatesGroup):
     edit_image = State()
     edit_content_text = State()
     edit_content_image = State()
-    duplicate_campaign = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -48,7 +47,6 @@ def admin_main_keyboard():
         InlineKeyboardButton(text="📥 Экспорт CSV", callback_data="admin:export"),
     )
     builder.row(
-        InlineKeyboardButton(text="📋 Кампании", callback_data="admin:campaigns"),
         InlineKeyboardButton(text="📢 Каналы", callback_data="admin:channels"),
     )
     return builder.as_markup()
@@ -371,9 +369,7 @@ async def admin_pushes(callback: CallbackQuery) -> None:
     async with session_factory() as session:
         pushes = (
             await session.execute(
-                select(PushMessage)
-                .where(PushMessage.campaign_id == 1)
-                .order_by(PushMessage.order_index)
+                select(PushMessage).order_by(PushMessage.order_index)
             )
         ).scalars().all()
 
@@ -667,9 +663,7 @@ async def admin_push_delete(callback: CallbackQuery) -> None:
     async with session_factory() as session:
         all_pushes = (
             await session.execute(
-                select(PushMessage)
-                .where(PushMessage.campaign_id == 1)
-                .order_by(PushMessage.order_index)
+                select(PushMessage).order_by(PushMessage.order_index)
             )
         ).scalars().all()
 
@@ -709,82 +703,3 @@ async def admin_export(callback: CallbackQuery) -> None:
     file = BufferedInputFile(csv_data, filename="users_export.csv")
     await callback.message.answer_document(file, caption="Экспорт пользователей")
     await callback.answer()
-
-
-@router.callback_query(F.data == "admin:campaigns")
-async def admin_campaigns(callback: CallbackQuery) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="📋 Дублировать кампанию",
-            callback_data="admin:duplicate",
-        )
-    )
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:menu"))
-
-    async with session_factory() as session:
-        campaigns = (await session.execute(select(Campaign))).scalars().all()
-        lines = ["<b>📋 Кампании</b>\n"]
-        for c in campaigns:
-            status = "активна" if c.is_active else "неактивна"
-            lines.append(f"• {c.name} ({status})")
-
-    await callback.message.edit_text("\n".join(lines), reply_markup=builder.as_markup())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "admin:duplicate")
-async def admin_duplicate_start(callback: CallbackQuery, state: FSMContext) -> None:
-    if not is_admin(callback.from_user.id):
-        await callback.answer("Нет доступа", show_alert=True)
-        return
-
-    await state.set_state(AdminStates.duplicate_campaign)
-    await callback.message.answer("Введите название новой кампании:")
-    await callback.answer()
-
-
-@router.message(AdminStates.duplicate_campaign)
-async def admin_duplicate_save(message: Message, state: FSMContext) -> None:
-    if not is_admin(message.from_user.id):
-        return
-
-    name = (message.text or "Новая кампания").strip()[:255]
-
-    async with session_factory() as session:
-        source_pushes = (
-            await session.execute(
-                select(PushMessage).where(PushMessage.campaign_id == 1)
-            )
-        ).scalars().all()
-
-        campaign = Campaign(name=name, is_active=False)
-        session.add(campaign)
-        await session.flush()
-
-        for push in source_pushes:
-            session.add(
-                PushMessage(
-                    campaign_id=campaign.id,
-                    order_index=push.order_index,
-                    delay_minutes=push.delay_minutes,
-                    text=push.text,
-                    image_file_id=push.image_file_id,
-                    button_text=push.button_text,
-                    button_url=push.button_url,
-                    enabled=push.enabled,
-                    stop_on_consultation_click=push.stop_on_consultation_click,
-                )
-            )
-        campaign_id = campaign.id
-        await session.commit()
-
-    await state.clear()
-    await message.answer(
-        f"Кампания «{name}» создана (id={campaign_id}). "
-        "Активируйте её в БД или добавьте переключение в админке."
-    )

@@ -10,24 +10,11 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
-
-
-class Campaign(Base):
-    __tablename__ = "campaigns"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), default="Основная")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-    pushes: Mapped[list["PushMessage"]] = relationship(back_populates="campaign")
 
 
 class User(Base):
@@ -54,7 +41,6 @@ class PushMessage(Base):
     __tablename__ = "push_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id"))
     order_index: Mapped[int] = mapped_column(Integer, default=0)
     delay_minutes: Mapped[int] = mapped_column(Integer, default=0)
     text: Mapped[str] = mapped_column(Text, default="")
@@ -63,8 +49,6 @@ class PushMessage(Base):
     button_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     stop_on_consultation_click: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    campaign: Mapped["Campaign"] = relationship(back_populates="pushes")
 
 
 class PushDelivery(Base):

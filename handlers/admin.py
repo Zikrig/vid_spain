@@ -9,7 +9,7 @@ from aiogram.types import (
     Message,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from config.settings import settings
 from services.analytics import export_users_csv, format_funnel_report, get_funnel_stats
@@ -40,6 +40,8 @@ class AdminStates(StatesGroup):
     edit_image = State()
     edit_content_text = State()
     edit_content_image = State()
+    add_push_delay = State()
+    add_push_text = State()
 
 
 def is_admin(user_id: int) -> bool:
@@ -119,6 +121,9 @@ def pushes_list_keyboard(pushes: list[PushMessage]):
                 callback_data=f"admin:push:{push.id}",
             )
         )
+    builder.row(
+        InlineKeyboardButton(text="➕ Добавить пуш", callback_data="admin:push_add")
+    )
     builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="admin:menu"))
     return builder.as_markup()
 
@@ -506,7 +511,8 @@ async def admin_pushes(callback: CallbackQuery) -> None:
         ).scalars().all()
 
     await callback.message.edit_text(
-        "<b>📬 Цепочка прогрева</b>\nВыберите пуш для редактирования:",
+        "<b>📬 Цепочка прогрева</b>\n"
+        "Выберите пуш или добавьте новый:",
         reply_markup=pushes_list_keyboard(list(pushes)),
     )
     await callback.answer()
@@ -847,8 +853,84 @@ async def admin_push_delete(callback: CallbackQuery) -> None:
         ).scalars().all()
 
     await callback.message.edit_text(
-        "<b>📬 Цепочка прогрева</b>\nВыберите пуш для редактирования:",
+        "<b>📬 Цепочка прогрева</b>\n"
+        "Выберите пуш или добавьте новый:",
         reply_markup=pushes_list_keyboard(list(all_pushes)),
+    )
+
+
+@router.callback_query(F.data == "admin:push_add")
+async def admin_push_add_start(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.add_push_delay)
+    await callback.message.answer(
+        "Через сколько минут после входа в бота отправить новый пуш?\n"
+        "Например: <code>60</code> — через час, <code>1440</code> — через сутки."
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.add_push_delay)
+async def admin_push_add_delay(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    if not message.text or not message.text.strip().isdigit():
+        await message.answer("Введите число минут, например: 1440")
+        return
+
+    await state.update_data(delay_minutes=int(message.text.strip()))
+    await state.set_state(AdminStates.add_push_text)
+    await message.answer(
+        "Отправьте текст нового пуша.\n"
+        "Форматирование Telegram (жирный, курсив) сохранится как HTML."
+    )
+
+
+@router.message(AdminStates.add_push_text)
+async def admin_push_add_text(message: Message, state: FSMContext) -> None:
+    if not is_admin(message.from_user.id):
+        return
+
+    text = message_html(message).strip()
+    if not text:
+        await message.answer("Текст пуша не может быть пустым.")
+        return
+
+    data = await state.get_data()
+    delay = data["delay_minutes"]
+
+    async with session_factory() as session:
+        next_order = (
+            await session.scalar(select(func.max(PushMessage.order_index))) or 0
+        ) + 1
+        push = PushMessage(
+            order_index=next_order,
+            delay_minutes=delay,
+            text=text,
+            button_text="Записаться на консультацию",
+            button_url="{consultation_url}",
+            button_enabled=True,
+            enabled=True,
+            stop_on_consultation_click=True,
+        )
+        session.add(push)
+        await session.flush()
+        push_id = push.id
+        await session.commit()
+
+    await state.clear()
+    await message.answer(
+        f"Пуш #{next_order} добавлен ✅\n\n"
+        f"Тайминг: {delay} мин.\n"
+        "Кнопку, картинку и остальное можно настроить в карточке пуша.",
+        reply_markup=InlineKeyboardBuilder()
+        .row(InlineKeyboardButton(text="◀️ К пушу", callback_data=f"admin:push:{push_id}"))
+        .row(InlineKeyboardButton(text="📬 К списку", callback_data="admin:pushes"))
+        .as_markup(),
     )
 
 
